@@ -10,7 +10,6 @@ readme = "README.crates.md"
 repository = "https://github.com/HEnquist/camilladsp"
 
 [features]
-default = ["websocket"]
 threaded-alsa = []
 # Promote real-time threads via rtkit over D-Bus instead of natively, see
 # src/utils/rt_priority.rs. PipeWire implies a desktop system where rtkit ships as a dependency of
@@ -18,10 +17,8 @@ threaded-alsa = []
 # that runs unprivileged on a desktop.
 rtkit = ["audio_thread_priority/with_dbus"]
 pipewire-backend = ["pipewire", "rtkit"]
-asio-backend = ["asio-sys"]
 bench = []
-websocket = ["tungstenite"]
-secure-websocket = ["websocket", "native-tls", "tungstenite/native-tls"]
+secure-websocket = ["native-tls", "tungstenite/native-tls"]
 debug = []
 
 # The sample precision is deliberately not a Cargo feature. Features are unified
@@ -43,7 +40,10 @@ path = "src/bin.rs"
 alsa = "0.9.0"
 alsa-sys = "0.3.1"
 nix = { version = "0.30", features = ["poll", "signal"] }
-pipewire = { version = "0.9", optional = true }
+# The v0_3_44 feature unlocks the key constants added up to PipeWire 0.3.44, of which we need
+# PW_KEY_TARGET_OBJECT. It sets the minimum PipeWire version to build against, which is well
+# below what any distro that ships PipeWire has.
+pipewire = { version = "0.9", optional = true, features = ["v0_3_44"] }
 
 [target.'cfg(target_os="macos")'.dependencies]
 coreaudio-rs = "0.13.0"
@@ -57,8 +57,8 @@ libc = "0.2.172"
 [target.'cfg(windows)'.dependencies]
 wasapi = "0.24.0"
 # wasapi = { version = "0.24.0", path = "../wasapi-rs" }
-windows = {version = "0.62.0", features = ["Win32_System_Threading", "Win32_Foundation"] }
-asio-sys = { version = "0.2.5", optional = true }
+windows = {version = "0.62.0", features = ["Win32_System_Threading", "Win32_System_Com", "Win32_Foundation"] }
+azo = "0.1.0"
 
 [dependencies]
 serde = { version = "1.0", features = ["derive", "rc"] }
@@ -78,7 +78,7 @@ git-version = "0.3"
 log = "0.4.14"
 flexi_logger = { version = "0.30.2", features = ["async", "colors"] }
 chrono = "0.4"
-tungstenite = { version = "0.26.1", optional = true }
+tungstenite = "0.26.1"
 native-tls = { version = "0.2.7", optional = true }
 rubato = "5.0"
 #rubato = { git = "https://github.com/HEnquist/rubato", branch = "preview_1.0" }
@@ -106,11 +106,19 @@ name = "filters"
 harness = false
 
 [[bench]]
+name = "conv_parallel"
+harness = false
+
+[[bench]]
 name = "conversions"
 harness = false
 
 [[bench]]
 name = "pipeline"
+harness = false
+
+[[bench]]
+name = "biquad_canon"
 harness = false
 
 [[bench]]
@@ -120,3 +128,10 @@ required-features = ["bench"]
 
 [profile.release]
 codegen-units = 1
+
+# Optimised build that compiles quickly, for testing changes against real hardware.
+# Splitting into more codegen units costs some runtime performance but builds much faster
+# than the release profile. Use the release profile for anything shipped or benchmarked.
+[profile.release-fast]
+inherits = "release"
+codegen-units = 16

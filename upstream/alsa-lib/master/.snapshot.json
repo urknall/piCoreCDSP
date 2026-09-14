@@ -2,8 +2,8 @@
   "source_id": "alsa-lib-master",
   "repo": "alsa-project/alsa-lib",
   "ref": "master",
-  "sha": "a48bbb2322fefc7eff9dca061517e935e98cb6a5",
-  "fetched_at": "2026-08-17T07:11:36.734909+00:00",
+  "sha": "f84cd4ced7b36fddb8e4ee24404cf7c091d27020",
+  "fetched_at": "2026-09-14T03:16:29.382229+00:00",
   "files": [
     "doc/asoundrc.txt",
     "include/Makefile.am",
