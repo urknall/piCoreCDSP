@@ -2,8 +2,8 @@
   "source_id": "camilladsp-next5",
   "repo": "HEnquist/camilladsp",
   "ref": "next5",
-  "sha": "8ed2e532f86347697890f6f346b72455324363e3",
-  "fetched_at": "2026-08-17T07:11:15.628032+00:00",
+  "sha": "b438410e734389c0cc12f8c4a0dac60552856ec2",
+  "fetched_at": "2026-09-14T03:16:14.581247+00:00",
   "files": [
     "CHANGELOG.md",
     "Cargo.toml",
