@@ -2,8 +2,8 @@
   "source_id": "camilladsp-next5",
   "repo": "HEnquist/camilladsp",
   "ref": "next5",
-  "sha": "8ed2e532f86347697890f6f346b72455324363e3",
-  "fetched_at": "2026-08-17T07:11:15.628032+00:00",
+  "sha": "99e97241fd73de289d34e0bcef81cc5bc5684040",
+  "fetched_at": "2026-09-21T03:16:10.557845+00:00",
   "files": [
     "CHANGELOG.md",
     "Cargo.toml",
@@ -15,6 +15,7 @@
     "src/alsa_backend/threaded_device.rs",
     "src/alsa_backend/utils.rs",
     "src/bin.rs",
+    "src/config/finite.rs",
     "src/config/mod.rs",
     "src/config/utils.rs",
     "src/engine.rs",
