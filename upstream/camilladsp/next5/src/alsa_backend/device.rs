@@ -505,6 +505,7 @@ fn playback_loop_bytes(
     };
     let mut rms_values = Vec::new();
     let mut peak_values = Vec::new();
+    let clipped_counter = params.playback_status.read().clipped_samples.clone();
     let mut buffer_avg = countertimer::Averager::new();
     let mut conversion_result;
     let adjust = params.adjust_period > 0.0 && params.adjust_enabled;
@@ -655,6 +656,7 @@ fn playback_loop_bytes(
                         &mut rms_values,
                         &mut peak_values,
                         conversion_result.1,
+                        &clipped_counter,
                     );
                     if let Some(avail) = avail_at_chunk_recvd {
                         let delay = buf_manager.current_delay(avail);
@@ -891,6 +893,8 @@ fn capture_loop_bytes(
     };
     let mut rms_values = Vec::new();
     let mut peak_values = Vec::new();
+    let used_channels = params.capture_status.read().used_channels.clone();
+    let mut channel_mask = Vec::with_capacity(params.channels);
     let thread_handle = match promote_current_thread_to_real_time(
         params.chunksize as u32,
         params.samplerate as u32,
@@ -1035,7 +1039,6 @@ fn capture_loop_bytes(
                 info!("Capture stopped");
                 let msg = AudioMessage::EndOfStream;
                 channels.audio.send(msg).unwrap_or(());
-                crate::set_capture_state(&params.capture_status, ProcessingState::Inactive);
                 return;
             }
             Err(msg) => {
@@ -1048,12 +1051,13 @@ fn capture_loop_bytes(
                 return;
             }
         };
+        used_channels.copy_to(&mut channel_mask);
         let mut chunk = buffer_to_chunk_rawbytes(
             &buffer[0..capture_bytes],
             params.channels,
             &params.sample_format,
             capture_bytes,
-            &params.capture_status.read().used_channels,
+            &channel_mask,
             false,
         );
         chunk.update_stats(&mut chunk_stats);
@@ -1099,7 +1103,6 @@ fn capture_loop_bytes(
             }
         };
     }
-    crate::set_capture_state(&params.capture_status, ProcessingState::Inactive);
 }
 
 fn update_avail_min(

@@ -1178,6 +1178,7 @@ impl PlaybackDevice for AlsaPlaybackDevice {
                         };
                         let mut rms_values = Vec::new();
                         let mut peak_values = Vec::new();
+                        let clipped_counter = playback_status.read().clipped_samples.clone();
                         let mut buf =
                             vec![0u8; channels * chunksize * binary_format.bytes_per_sample()];
 
@@ -1238,6 +1239,7 @@ impl PlaybackDevice for AlsaPlaybackDevice {
                                         &mut rms_values,
                                         &mut peak_values,
                                         conversion_result.1,
+                                        &clipped_counter,
                                     );
 
                                     let bytes_to_write = conversion_result.0;
@@ -1658,10 +1660,6 @@ impl CaptureDevice for AlsaCaptureDevice {
                                         }
                                     };
                                 }
-                                crate::set_capture_state(
-                                    &cap_params.capture_status,
-                                    ProcessingState::Inactive,
-                                );
                             }
                             Err(err) => {
                                 tx_state_dev
@@ -1692,6 +1690,8 @@ impl CaptureDevice for AlsaCaptureDevice {
                         };
                         let mut rms_values = Vec::new();
                         let mut peak_values = Vec::new();
+                        let used_channels = capture_status.read().used_channels.clone();
+                        let mut channel_mask = Vec::with_capacity(channels);
                         let mut rate_adjust = 0.0;
                         // Sample rate measured over the last completed `rate_measure_interval`
                         // window, kept separate from the short update cadence.
@@ -1860,12 +1860,13 @@ impl CaptureDevice for AlsaCaptureDevice {
                                 }
                             }
 
+                            used_channels.copy_to(&mut channel_mask);
                             let mut chunk = buffer_to_chunk_rawbytes(
                                 &data_buffer[0..capture_bytes],
                                 channels,
                                 &binary_format,
                                 capture_bytes,
-                                &capture_status.read().used_channels,
+                                &channel_mask,
                                 false,
                             );
 
@@ -1905,7 +1906,6 @@ impl CaptureDevice for AlsaCaptureDevice {
                                 }
                             };
                         }
-                        crate::set_capture_state(&capture_status, ProcessingState::Inactive);
                     }
                     Ok(AlsaThreadState::Error(err)) => {
                         status_channel
@@ -1920,6 +1920,12 @@ impl CaptureDevice for AlsaCaptureDevice {
                         barrier.wait();
                     }
                 }
+                // The outer loop can end without telling the inner thread, for example
+                // on a rate change. Hanging up both channels to it is what makes it exit:
+                // it sees the command channel disconnect, and its blocking EndOfStream
+                // send fails at once instead of waiting on a full channel nobody reads.
+                drop(tx_inner_command);
+                drop(rx_dev);
                 innerhandle.join().unwrap_or(());
             })
             .unwrap();
