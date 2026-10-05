@@ -19,7 +19,6 @@ extern crate log;
 
 use clap::{Arg, ArgAction, Command, crate_authors, crate_description, crate_name, crate_version};
 use git_version::git_version;
-#[cfg(feature = "websocket")]
 use std::net::IpAddr;
 use std::path::PathBuf;
 
@@ -81,16 +80,17 @@ fn parse_gain_value(v: &str) -> Result<f32, String> {
 
 fn main_process() -> i32 {
     let mut features = Vec::new();
-    if cfg!(feature = "websocket") {
-        features.push("websocket");
-    }
     if cfg!(feature = "secure-websocket") {
         features.push("secure-websocket");
     }
     if cfg!(feature = "debug") {
         features.push("debug");
     }
-    let featurelist = format!("Built with features: {}", features.join(", "));
+    let featurelist = if features.is_empty() {
+        "Built with features: none".to_string()
+    } else {
+        format!("Built with features: {}", features.join(", "))
+    };
 
     // The sample precision is a rustc cfg rather than a Cargo feature, so it is
     // reported separately to avoid implying it can be selected with --features.
@@ -101,11 +101,7 @@ fn main_process() -> i32 {
     let playback_types = format!("Playback: {}", pb_types.join(", "));
     let capture_types = format!("Capture: {}", cap_types.join(", "));
 
-    let license_notice = if cfg!(feature = "asio-backend") {
-        "License: GPLv3 only (built with ASIO backend)".to_string()
-    } else {
-        "License: GPLv3 or MPL-2.0".to_string()
-    };
+    let license_notice = "License: GPLv3 or MPL-2.0".to_string();
 
     let version_with_hash: &'static str =
         Box::leak(format!("{} ({})", crate_version!(), GIT_HASH).into_boxed_str());
@@ -342,9 +338,7 @@ fn main_process() -> i32 {
                     "F64_LE",
                 ])
                 .help("Override sample format of capture device in config"),
-        );
-    #[cfg(feature = "websocket")]
-    let clapapp = clapapp
+        )
         .arg(
             Arg::new("port")
                 .help("Port for websocket server")
@@ -491,7 +485,7 @@ fn main_process() -> i32 {
 
     let mut initial_volumes = if let Some(s) = &state {
         debug!("Using statefile for initial volume");
-        s.volume
+        s.volumes()
     } else {
         debug!("Using default initial volume");
         [
@@ -590,15 +584,15 @@ fn main_process() -> i32 {
 
     // All state variables are prepared, save to the statefile if needed
     if let Some(fname) = &statefilename {
-        let state_to_save = statefile::State {
-            config_path: configname.clone(),
-            volume: initial_volumes,
-            mute: initial_mutes,
-        };
-        if state.is_none() || state.map(|s| s != state_to_save).unwrap_or(false) {
-            statefile::save_state_to_file(fname, &state_to_save);
-        } else {
-            debug!("No change to state from {fname}, not overwriting.");
+        match statefile::State::new(configname.clone(), initial_mutes, initial_volumes) {
+            Ok(state_to_save) => {
+                if state.is_none() || state.map(|s| s != state_to_save).unwrap_or(false) {
+                    statefile::save_state_to_file(fname, &state_to_save);
+                } else {
+                    debug!("No change to state from {fname}, not overwriting.");
+                }
+            }
+            Err(err) => error!("Not saving state to '{fname}', error: {err}"),
         }
     }
 
@@ -608,9 +602,7 @@ fn main_process() -> i32 {
         initial_volumes,
         initial_mutes,
         wait: matches.get_flag("wait"),
-        #[cfg(feature = "websocket")]
         ws_port: matches.get_one::<usize>("port").copied(),
-        #[cfg(feature = "websocket")]
         ws_address: matches
             .get_one::<String>("address")
             .cloned()
