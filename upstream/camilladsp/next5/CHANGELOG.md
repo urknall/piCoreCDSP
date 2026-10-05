@@ -1,75 +1,53 @@
 # 5.0.0
-New features:
-- Websocket commands for streaming signal level and state change events.
-- Websocket commands for audio spectrum data (single read & streaming).
-- Websocket command for getting device capabilities.
-- New `Slip` resampler for very cheap rate adjust between independent clocks at the same nominal rate.
-- RF64 support for reading and writing wav files larger than 4 GB (`use_rf64` for File playback).
-- New `LookaheadLimiter`, as a single-channel filter and as a multichannel processor with
-  configurable monitor and process channels.
+This is the short version. See [CHANGELOG_5.0_details.md](CHANGELOG_5.0_details.md) for the full
+list of changes, with background and measurements.
 
-Bugfixes:
-- ASIO: size the ring buffer and prefill from the driver's actual buffer size instead of just
-  `chunksize`, fixing continuous underruns when the driver requests a larger buffer than `chunksize`.
+New features:
+- Add lookahead limiter, as a filter and as a multichannel processor.
+- Add `Slip` resampler for cheap rate adjust between clocks at the same nominal rate.
+- Websocket commands for streaming signal levels and state change events.
+- Websocket commands for reading spectrum data, single read and streaming.
+- Websocket command for getting device capabilities.
+- RF64 support for reading and writing wav files larger than 4 GB.
+- Adjustable corner frequencies and Q for the `Loudness` shelves.
+- ASIO: capture and playback can use two different devices.
+- PipeWire: `loopback` option for capturing from the output of a sink.
+- PipeWire: request the config sample rate as the graph rate, for multi-rate DACs.
 
 Changes:
-- Improved DSP library separation for easier external integration.
-- File playback now writes correct wav header sizes, and stops at the 4 GB limit for plain wav.
-- The `32bit` build feature is gone. 32-bit float processing is now selected with the compiler
-  flag `RUSTFLAGS="--cfg camillafloat_f32"` instead. Cargo features are unified across the whole
-  dependency graph, so as a feature it could be switched on by any other crate in a build that
-  uses CamillaDSP as a library. Anyone building with `--features 32bit` needs to switch to the
-  new flag.
-- The sample type `PrcFmt` is renamed to `CamillaFloat`. The active precision is now shown as
-  `Sample precision` in `camilladsp --help`.
-- Configuration values and filter coefficient math are now always 64-bit, independent of the
-  processing precision. An f32 build therefore parses configs, serialises them over the websocket,
-  and computes filter coefficients exactly like a normal build, and rounds only once when the
-  finished coefficients enter the processing path. This noticeably improves f32 accuracy for
-  low-frequency biquads.
-- The audio buffer used for spectrum analysis is now only filled after a client has asked for
-  spectrum data. It was previously written on every chunk, on both the capture and playback
-  threads, whether or not anything was reading it. Setups that never use the spectrum no longer
-  pay for it. The first spectrum request after startup can report insufficient data until enough
-  audio has accumulated, typically well under a tenth of a second.
-- Spectrum analysis is done in 32-bit float, which halves the memory used by its audio buffer.
-  The numerical noise floor stays far below the displayed range.
-- The pre-built Linux binaries now need glibc 2.34 or newer, meaning Raspberry Pi OS Bookworm
-  or another distribution of similar age. Older systems must build from source.
-- No more pre-built armv6 binary for the Raspberry Pi 1 and the original Pi Zero.
-  Those must build from source.
+- Several times faster biquad filtering.
+- Faster convolution setup and processing, with lower memory use.
+- Applying a config with large FIR filters no longer stalls the audio.
+- ASIO no longer uses the Steinberg SDK and is included in all Windows builds.
+  The separate ASIO download is gone.
+- ASIO: the ASIO4ALL driver is refused, use the Wasapi backend instead.
+- Pre-built Linux binaries need glibc 2.34 or newer (Raspberry Pi OS Bookworm or similar).
+- No more pre-built armv6 binary for Raspberry Pi 1 and Zero.
+
+Bugfixes:
+- PipeWire: an `autoconnect_to` target that is not found no longer falls back to the default device.
+- File playback writes correct wav header sizes.
+- Various smaller fixes, see the [detailed changelog](CHANGELOG_5.0_details.md#bugfixes).
 
 Config changes (breaking):
-- Time values no longer accept unitless numbers. Every time-valued parameter now states its unit.
-- Tunable times take a mandatory companion unit field:
-  - `Delay` filter: `unit` renamed to `delay_unit` (now required).
-  - `RACE` processor: `delay_unit` now required.
-  - `Compressor` and `NoiseGate` processors: added required `attack_unit` and `release_unit`.
-    The previous `attack`/`release` values were in seconds, so add `attack_unit: s` and `release_unit: s`
-    to keep the old behavior.
-  - `LookaheadLimiter` filter: the shared `unit` is split into `attack_unit` and `release_unit`.
-- Fixed-unit times bake the unit into the field name:
-  - `adjust_period` renamed to `adjust_interval_s` (also aligns wording with `rate_measure_interval_s`).
-  - `silence_timeout` renamed to `silence_timeout_s`.
-  - `rate_measure_interval` renamed to `rate_measure_interval_s`.
-  - `volume_ramp_time` renamed to `volume_ramp_time_ms`.
-  - `Volume` filter: `ramp_time` renamed to `ramp_time_ms`.
-- Delay and RACE now also accept `s` (seconds) as a unit.
-- The `Limiter` filter is renamed to `Clipper` (`type: Limiter` becomes `type: Clipper`), to avoid
-  confusion with the new `LookaheadLimiter`. Its parameters are unchanged.
+- `FivePointPeq` is replaced by `NPointPeq`, which takes a list of any number of `bands`.
+- The `Limiter` filter is renamed to `Clipper`.
+- `Volume` filters that use the same fader must have the same `ramp_time_ms` and `limit`.
+- Time values must state their unit, either in a required unit field (`delay_unit`,
+  `attack_unit`, `release_unit`) or in the parameter name (`adjust_interval_s`,
+  `silence_timeout_s`, `ramp_time_ms` and so on). See the
+  [detailed changelog](CHANGELOG_5.0_details.md#config-changes-breaking) for the full list.
 
 Websocket protocol changes (breaking):
-- Messages are now internally tagged with a uniform object shape.
-  - Commands carry the name in a `command` field, with arguments in named fields:
-    `"GetVersion"` becomes `{"command": "GetVersion"}`, and `{"SetUpdateInterval": 500}` becomes
-    `{"command": "SetUpdateInterval", "value": 500}`.
-  - Replies carry the name in a `reply` field as a single flat object:
-    `{"GetUpdateInterval": {"result": "Ok", "value": 500}}` becomes
-    `{"reply": "GetUpdateInterval", "result": "Ok", "value": 500}`.
-  - Errors are flat too: `result` holds the error name, and any description rides at the top level
-    in a `message` field, replacing the previous double-nested shape.
-  - Commands that took multiple arguments now use named fields instead of an array, for example
-    `AdjustVolume` takes `value` plus optional `min` and `max`.
+- Messages use a uniform tagged object shape. For example `{"SetUpdateInterval": 500}` becomes
+  `{"command": "SetUpdateInterval", "value": 500}`, and replies carry the name in a `reply` field.
+  See the details for the full description. Users of pycamilladsp won't notice this,
+  as long as they update to pycamilladsp 5.0.
+
+Build changes (breaking):
+- The `websocket` feature is gone, the websocket server is always included.
+- The `asio-backend` feature is gone, ASIO is always included on Windows.
+- The `32bit` feature is replaced by `RUSTFLAGS="--cfg camillafloat_f32"`.
 
 Removed:
 - Dropped the Jack, Pulse and Bluez backends. On Linux, use the native PipeWire backend, or
