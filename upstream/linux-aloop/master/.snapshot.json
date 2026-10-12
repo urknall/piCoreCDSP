@@ -2,7 +2,7 @@
   "source_id": "linux-aloop-master",
   "repo": "torvalds/linux",
   "ref": "master",
-  "sha": "8d3ae59288f1e7d58d76558a6ee96d533bc5019f",
-  "fetched_at": "2026-08-17T07:12:00.570021+00:00",
+  "sha": "24a19b953e2a3d0ea5a8c4951a0ab8f32720c907",
+  "fetched_at": "2026-10-12T03:27:02.644876+00:00",
   "files": []
 }

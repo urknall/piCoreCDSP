@@ -17,41 +17,7 @@
 //! Websocket server for controlling CamillaDSP.
 //!
 //! Connect to the server at `ws://127.0.0.1:<port>` (or a custom address set with `-a`).
-//! All messages are UTF-8 text frames containing a JSON value.
-//!
-//! ## Command syntax
-//!
-//! Every command is a JSON object with a `"command"` field naming the command:
-//! ```json
-//! {"command": "GetVersion"}
-//! ```
-//!
-//! Commands with arguments carry them in additional named fields:
-//! ```json
-//! {"command": "SetUpdateInterval", "value": 500}
-//! ```
-//!
-//! ## Response format
-//!
-//! Every reply is a JSON object with a `"reply"` field naming the reply. Replies that do not
-//! return a value carry only the `"result"` status:
-//! ```json
-//! {"reply": "SetUpdateInterval", "result": "Ok"}
-//! ```
-//!
-//! Replies that return a value add a `"value"` field:
-//! ```json
-//! {"reply": "GetUpdateInterval", "result": "Ok", "value": 500}
-//! ```
-//!
-//! If a command fails the `"result"` field holds the error name instead of `"Ok"`, and there is
-//! no `"value"` field. Errors that carry a description add a top-level `"message"` field:
-//! ```json
-//! {"reply": "SetConfig", "result": "ConfigValidationError", "message": "details..."}
-//! ```
-//! Errors without a message have just the name: `{"reply": "SetFaderVolume", "result": "InvalidFaderError"}`.
-//!
-//! Unrecognised commands get a `{"reply": "Invalid", "error": "..."}` response.
+//! The messages and their format are in the `protocol` module of the `camilladsp-schema` crate.
 //!
 //! ## Subscription commands
 //!
@@ -68,7 +34,6 @@
 //! ```
 //! then navigate to **`camilladsp::websocket_server`**.
 
-mod datastructures;
 mod utils;
 
 use clap::crate_version;
@@ -86,11 +51,6 @@ use std::time::{Duration, Instant};
 use tungstenite::Message;
 use tungstenite::WebSocket;
 
-use self::datastructures::{
-    AllLevels, ChannelLabels, Fader, PbCapLevels, SpectrumRequest, SpectrumSide,
-    SpectrumSubscription, VuLevels, VuSubscription, WsCommand, WsReply, WsResult,
-    WsSignalLevelSide,
-};
 use self::utils::{
     accept_plain_stream, capture_signal_global_peak, capture_signal_peak,
     capture_signal_peak_since, capture_signal_peak_since_last, capture_signal_rms,
@@ -113,6 +73,11 @@ use crate::{
     list_supported_devices,
 };
 use crate::{ControllerMessage, config};
+use camilladsp_schema::protocol::{
+    AllLevels, ChannelLabels, Fader, PbCapLevels, SpectrumRequest, SpectrumSide,
+    SpectrumSubscription, VuLevels, VuSubscription, WsCommand, WsReply, WsResult,
+    WsSignalLevelSide,
+};
 
 const SUBSCRIPTION_READ_TIMEOUT_MS: u64 = 10;
 
@@ -795,12 +760,11 @@ fn handle_command(
             match cfg_path {
                 Some(path) => match config::load_config(path.as_str()) {
                     Ok(mut conf) => match config::validate_config(&mut conf, Some(path.as_str())) {
-                        Ok(()) => {
+                        Ok(impulses) => {
                             debug!("WS: Config file loaded successfully, send to controller");
-                            match shared_data_inst
-                                .command_sender
-                                .try_send(ControllerMessage::ConfigChanged(Box::new(conf)))
-                            {
+                            match shared_data_inst.command_sender.try_send(
+                                ControllerMessage::ConfigChanged(Box::new(conf), impulses),
+                            ) {
                                 Ok(()) => Some(WsReply::Reload {
                                     result: WsResult::Ok,
                                 }),
@@ -1060,12 +1024,12 @@ fn handle_command(
             let pbstat = shared_data_inst.playback_status.read();
             Some(WsReply::GetClippedSamples {
                 result: WsResult::Ok,
-                value: pbstat.clipped_samples,
+                value: pbstat.clipped_samples.load(Ordering::Relaxed),
             })
         }
         WsCommand::ResetClippedSamples => {
-            let mut pbstat = shared_data_inst.playback_status.write();
-            pbstat.clipped_samples = 0;
+            let pbstat = shared_data_inst.playback_status.read();
+            pbstat.clipped_samples.store(0, Ordering::Relaxed);
             Some(WsReply::ResetClippedSamples {
                 result: WsResult::Ok,
             })
@@ -1461,10 +1425,10 @@ fn handle_command(
         WsCommand::SetConfig { value: config_yml } => {
             match yaml_serde::from_str::<config::Configuration>(&config_yml) {
                 Ok(mut conf) => match config::validate_config(&mut conf, None) {
-                    Ok(()) => {
+                    Ok(impulses) => {
                         match shared_data_inst
                             .command_sender
-                            .try_send(ControllerMessage::ConfigChanged(Box::new(conf)))
+                            .try_send(ControllerMessage::ConfigChanged(Box::new(conf), impulses))
                         {
                             Ok(()) => Some(WsReply::SetConfig {
                                 result: WsResult::Ok,
@@ -1505,10 +1469,10 @@ fn handle_command(
         WsCommand::SetConfigJson { value: config_json } => {
             match serde_json::from_str::<config::Configuration>(&config_json) {
                 Ok(mut conf) => match config::validate_config(&mut conf, None) {
-                    Ok(()) => {
+                    Ok(impulses) => {
                         match shared_data_inst
                             .command_sender
-                            .try_send(ControllerMessage::ConfigChanged(Box::new(conf)))
+                            .try_send(ControllerMessage::ConfigChanged(Box::new(conf), impulses))
                         {
                             Ok(()) => Some(WsReply::SetConfigJson {
                                 result: WsResult::Ok,
@@ -1561,10 +1525,10 @@ fn handle_command(
             let updated_conf = serde_json::from_value::<config::Configuration>(conf_as_value);
             match updated_conf {
                 Ok(mut conf) => match config::validate_config(&mut conf, None) {
-                    Ok(()) => {
+                    Ok(impulses) => {
                         match shared_data_inst
                             .command_sender
-                            .try_send(ControllerMessage::ConfigChanged(Box::new(conf)))
+                            .try_send(ControllerMessage::ConfigChanged(Box::new(conf), impulses))
                         {
                             Ok(()) => Some(WsReply::PatchConfig {
                                 result: WsResult::Ok,
@@ -1626,10 +1590,10 @@ fn handle_command(
             let updated_conf = serde_json::from_value::<config::Configuration>(conf_as_value);
             match updated_conf {
                 Ok(mut conf) => match config::validate_config(&mut conf, None) {
-                    Ok(()) => {
+                    Ok(impulses) => {
                         match shared_data_inst
                             .command_sender
-                            .try_send(ControllerMessage::ConfigChanged(Box::new(conf)))
+                            .try_send(ControllerMessage::ConfigChanged(Box::new(conf), impulses))
                         {
                             Ok(()) => Some(WsReply::SetConfigValue {
                                 result: WsResult::Ok,
@@ -1719,7 +1683,7 @@ fn handle_command(
         WsCommand::ValidateConfig { value: config_yml } => {
             match yaml_serde::from_str::<config::Configuration>(&config_yml) {
                 Ok(mut conf) => match config::validate_config(&mut conf, None) {
-                    Ok(()) => Some(WsReply::ValidateConfig {
+                    Ok(_) => Some(WsReply::ValidateConfig {
                         result: WsResult::Ok,
                         value: yaml_serde::to_string(&conf).unwrap(),
                     }),
@@ -1747,7 +1711,7 @@ fn handle_command(
         WsCommand::ValidateConfigJson { value: config_json } => {
             match serde_json::from_str::<config::Configuration>(&config_json) {
                 Ok(mut conf) => match config::validate_config(&mut conf, None) {
-                    Ok(()) => Some(WsReply::ValidateConfigJson {
+                    Ok(_) => Some(WsReply::ValidateConfigJson {
                         result: WsResult::Ok,
                         value: serde_json::to_string(&conf).unwrap(),
                     }),
@@ -1937,7 +1901,7 @@ fn make_spectrum_subscription(
         .active_config
         .lock()
         .as_ref()
-        .map(|c| c.devices.samplerate)
+        .map(|c| c.devices.samplerate())
         .unwrap_or(0);
     if samplerate == 0 {
         return Err(WsResult::ProcessingNotRunningError);
@@ -1992,7 +1956,7 @@ fn handle_get_spectrum(req: SpectrumRequest, shared_data: &SharedData) -> WsRepl
         .active_config
         .lock()
         .as_ref()
-        .map(|c| c.devices.samplerate)
+        .map(|c| c.devices.samplerate())
         .unwrap_or(0);
     if samplerate == 0 {
         return WsReply::GetSpectrum {
@@ -2075,9 +2039,9 @@ fn handle_get_spectrum(req: SpectrumRequest, shared_data: &SharedData) -> WsRepl
 #[cfg(test)]
 mod tests {
     use super::VuSubscriptionState;
-    use super::datastructures::{VuSubscription, WsCommand, WsResult, WsSignalLevelSide};
     use super::utils::{parse_command, validate_vu_subscription};
     use crate::signal_monitor::SignalLevelSide as MonitorSignalLevelSide;
+    use camilladsp_schema::protocol::{VuSubscription, WsCommand, WsResult, WsSignalLevelSide};
     use std::time::{Duration, Instant};
     use tungstenite::Message;
 
@@ -2230,7 +2194,7 @@ mod tests {
 
     #[test]
     fn adjust_volume_serde_format() {
-        use super::datastructures::WsCommand;
+        use camilladsp_schema::protocol::WsCommand;
         let plain: WsCommand =
             serde_json::from_str("{\"command\": \"AdjustVolume\", \"value\": -3.0}").unwrap();
         assert_eq!(
